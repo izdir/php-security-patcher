@@ -1,122 +1,124 @@
 # patch_php.sh
 
-Script para aplicar actualizaciones de seguridad de PHP en servidores
-Debian/Ubuntu (VPS propios, no hosting compartido/cPanel gestionado por
-terceros), con registro automático de la versión antes y después de
-la actualización.
+A script to apply PHP security updates on Debian/Ubuntu servers (your own
+VPS, not shared hosting or third-party-managed cPanel), with automatic
+logging of the PHP version before and after the update.
 
-Nació a partir del parche de emergencia de PHP del 21 de octubre de
-2026 (CVE-2026-109618 y CVE-2026-109619), pero sirve para cualquier
-actualización de seguridad de PHP futura.
+It was born out of the emergency PHP patch of October 21, 2026
+(CVE-2026-109618 and CVE-2026-109619), but it works for any future PHP
+security update.
 
-## Contexto
+## Background
 
-El 21 de octubre de 2026 el proyecto PHP publicó las versiones
-**8.5.12, 8.4.27, 8.3.36 y 8.2.35**, que corrigen dos vulnerabilidades
-críticas de ejecución remota de código (CVSS 9.2):
+On October 21, 2026, the PHP project released versions
+**8.5.12, 8.4.27, 8.3.36 and 8.2.35**, which fix two critical remote code
+execution vulnerabilities (CVSS v4.0 9.2):
 
 - **CVE-2026-109618** ([GHSA-w8hw-w9fx-j79w](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)):
-  corrupción de memoria al alcanzar `memory_limit`. En Apache con
-  mod_php, una petición sin autenticar puede dispararla antes de que
-  corra código de la aplicación. También se confirmó RCE en PHP-FPM
-  mediante rutas de código de la aplicación.
+  memory corruption when `memory_limit` is reached. On Apache with
+  mod_php, an unauthenticated request can trigger it before any
+  application code runs. RCE was also confirmed on PHP-FPM through
+  application code paths.
 - **CVE-2026-109619** ([GHSA-6wmf-4rv5-p3rp](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp)):
-  estado obsoleto tras un error fatal que permite un use-after-free en
-  una petición posterior del mismo worker.
+  stale state after a fatal error that allows a use-after-free in a
+  later request handled by the same worker.
 
-Fuentes oficiales:
+Official sources:
 
-- [Anuncio en php.net](https://www.php.net/archive/2026.php#2026-10-21-5)
-- [Post de The PHP Foundation](https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/)
+- [Announcement on php.net](https://www.php.net/archive/2026.php#2026-10-21-5)
+- [The PHP Foundation blog post](https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/)
 
-## Ejemplo real
+## Real-world example
 
-Salida del log en un servidor Ubuntu 22.04, antes y después de correr
-el script (PHP 8.4.24 → 8.4.27, CLI y FPM):
+Log output on an Ubuntu 22.04 server, before and after running the
+script (PHP 8.4.24 → 8.4.27, CLI and FPM):
 
-![Log antes/después del parcheo](patch_php.jpeg)
+![Before/after patch log](patch_php.jpeg)
 
-## Qué hace
+## What it does
 
-1. Verifica que se ejecute como `root` y aborta si no.
-2. Detecta automáticamente la versión de PHP instalada (`php -r`).
-3. Detecta si usás PHP-FPM, y si tu servidor web es Apache o Nginx.
-4. Registra un snapshot "ANTES" (versión de PHP, PHP-FPM y paquetes dpkg)
-   en un log con timestamp UTC.
-5. Ejecuta `apt update` y `apt install --only-upgrade` solo sobre los
-   paquetes `phpX.Y*` y `libapache2-mod-phpX.Y` (si usás mod_php), en
-   modo no interactivo y conservando tus archivos de configuración
+1. Checks that it is running as `root` and aborts if not.
+2. Automatically detects the installed PHP version (`php -r`).
+3. Detects whether you use PHP-FPM, and whether your web server is
+   Apache or Nginx.
+4. Writes a "BEFORE" snapshot (PHP version, PHP-FPM version and dpkg
+   packages) to a log file with a UTC timestamp.
+5. Runs `apt update` and `apt install --only-upgrade` only on the
+   `phpX.Y*` packages and `libapache2-mod-phpX.Y` (if you use mod_php),
+   in non-interactive mode and keeping your existing configuration files
    (`--force-confold`).
-6. Reinicia PHP-FPM y el servidor web detectado (esto es crítico: sin
-   reiniciar, el binario viejo puede seguir corriendo en memoria aunque
-   el paquete ya esté actualizado).
-7. Registra un snapshot "DESPUÉS" y verifica con `/proc/<PID>/exe` que el
-   proceso FPM en ejecución use el binario nuevo (si aparece `(deleted)`,
-   sigue corriendo el viejo).
+6. Restarts PHP-FPM and the detected web server. This step is critical:
+   without a restart, the old binary can keep running in memory even
+   though the package has already been upgraded.
+7. Writes an "AFTER" snapshot and checks `/proc/<PID>/exe` to confirm that
+   the running FPM process is using the new binary (if it shows
+   `(deleted)`, the old one is still running).
 
-## Uso
+## Usage
 
 ```bash
 chmod +x patch_php.sh
 sudo ./patch_php.sh
 ```
 
-El log queda en `/var/log/php_patch_log.txt` (podés cambiar la ruta
-editando la variable `LOG_FILE` al inicio del script).
+The log is saved to `/var/log/php_patch_log.txt` (you can change the
+path by editing the `LOG_FILE` variable at the top of the script).
 
-Al terminar, compará la versión del snapshot "ANTES" con la del
-"DESPUÉS" y con la versión corregida publicada en php.net para tu rama.
+When it finishes, compare the version in the "BEFORE" snapshot with the
+"AFTER" one, and with the fixed version published on php.net for your
+branch.
 
-## Requisitos / supuestos
+## Requirements / assumptions
 
-- Debian o Ubuntu con PHP instalado vía `apt` (paquete de la distro o
-  repositorio de terceros como Sury/Ondřej).
-- Permisos de `root` o `sudo`.
-- El nombre del paquete de PHP sigue el patrón estándar `phpX.Y`
-  (como lo nombran Debian/Ubuntu y el repo de Sury).
-- Que tu repositorio ya haya publicado el paquete corregido. Si todavía
-  no lo hizo, `apt` no va a encontrar nada nuevo y la versión no
-  cambia: por eso el log "DESPUÉS" es importante.
-- Si un paquete trae cambios en un archivo de configuración, el script
-  conserva tu versión actual (`--force-confold`). Revisá después si el
-  paquete nuevo trae opciones que te interesen.
-- El log se va acumulando (append): cada corrida agrega bloques ANTES/DESPUÉS.
+- Debian or Ubuntu with PHP installed via `apt` (the distro package or a
+  third-party repository such as Sury/Ondřej).
+- `root` or `sudo` privileges.
+- PHP packages follow the standard `phpX.Y` naming pattern (as used by
+  Debian/Ubuntu and the Sury repo).
+- Your repository must already have published the fixed package. If it
+  hasn't yet, `apt` won't find anything new and the version won't
+  change, which is why the "AFTER" log matters.
+- If a package ships changes to a configuration file, the script keeps
+  your current version (`--force-confold`). Check afterwards whether the
+  new package offers options you might want.
+- The log is append-only: every run adds a new BEFORE/AFTER block.
 
-## Qué NO hace
+## What it does NOT do
 
-- No resuelve el caso de hosting compartido / cPanel administrado por
-  un tercero: ahí depende del proveedor, no de este script.
-- **No actúa sobre PHP 8.1 o anterior (EOL).** El script detecta esto
-  al inicio y aborta con una advertencia explícita, en vez de fallar
-  en silencio o dar una falsa sensación de que quedaste parcheado.
-  El proyecto PHP no publica correcciones para 8.1 y ramas anteriores;
-  la opción es migrar a una rama soportada (8.2 o superior) o consultar
-  si el mantenedor de tu distribución ofrece un paquete con el fix
-  portado.
-- No reemplaza tener un backup antes de actualizar. **Hacé tu backup
-  primero, siempre**, y si podés probá antes en un entorno de staging.
-- No es un escáner de vulnerabilidades ni valida si tu sistema está
-  comprometido: solo automatiza el parcheo y su verificación.
+- It does not cover shared hosting or cPanel managed by a third party:
+  there it depends on your provider, not on this script.
+- **It does not act on PHP 8.1 or earlier (EOL).** The script detects
+  this at startup and aborts with an explicit warning, instead of failing
+  silently or giving you a false sense of being patched. The PHP project
+  does not publish fixes for 8.1 and earlier branches; your options are
+  to migrate to a supported branch (8.2 or higher) or to ask whether
+  your distribution's maintainer offers a package with the fix
+  backported.
+- It does not replace having a backup before updating. **Take your
+  backup first, always**, and if you can, test in a staging environment
+  beforehand.
+- It is not a vulnerability scanner and does not check whether your
+  system has been compromised: it only automates patching and its
+  verification.
 
-## Por qué existe
+## Why it exists
 
-Durante incidentes de seguridad críticos (como el de octubre de 2026),
-la diferencia entre quedar expuesto o no se mide en minutos. Este
-script elimina la fricción de "actualizar a mano, revisar versión,
-reiniciar, revisar de nuevo" y deja evidencia clara (el log) de que
-el parche se aplicó y se verificó, útil tanto para vos como para
-mostrarle a un cliente o equipo que el trabajo se hizo.
+During critical security incidents (like the one in October 2026), the
+difference between being exposed or not is measured in minutes. This
+script removes the friction of "update by hand, check the version,
+restart, check again" and leaves clear evidence (the log) that the patch
+was applied and verified, useful both for yourself and for showing a
+client or team that the job was done.
 
-## Contacto
+## Contact
 
-¿Necesitás parchear o revisar tus servidores PHP/Linux?
-Ofrezco parcheo con informe antes/después, auditoría básica y
-configuración de servidores (VPS).
+Need help patching or reviewing your PHP/Linux servers? I offer patching
+with a before/after report, basic audits and server (VPS) setup.
 
 - Email: izdirtxhx@proton.me
 - X: @IzDirtHxH
 
-## Licencia
+## License
 
-MIT: usalo, modificalo y compartilo libremente. Ver el archivo
-[LICENSE](LICENSE).
+MIT: use it, modify it and share it freely. See the
+[LICENSE](LICENSE) file.
