@@ -11,12 +11,23 @@ actualización de seguridad de PHP futura.
 
 ## Contexto
 
-El 21 de octubre de 2026 el equipo de seguridad de PHP publicó las
-versiones **8.5.12, 8.4.27, 8.3.36 y 8.2.35**, que corrigen dos
-vulnerabilidades críticas (CVE-2026-109618 y CVE-2026-109619, CVSS v4.0
-9.2) que pueden permitir ejecución remota de código sin autenticación.
+El 21 de octubre de 2026 el proyecto PHP publicó las versiones
+**8.5.12, 8.4.27, 8.3.36 y 8.2.35**, que corrigen dos vulnerabilidades
+críticas de ejecución remota de código (CVSS 9.2):
 
-Fuente oficial: [php.net](https://www.php.net/)
+- **CVE-2026-109618** ([GHSA-w8hw-w9fx-j79w](https://github.com/php/php-src/security/advisories/GHSA-w8hw-w9fx-j79w)):
+  corrupción de memoria al alcanzar `memory_limit`. En Apache con
+  mod_php, una petición sin autenticar puede dispararla antes de que
+  corra código de la aplicación. También se confirmó RCE en PHP-FPM
+  mediante rutas de código de la aplicación.
+- **CVE-2026-109619** ([GHSA-6wmf-4rv5-p3rp](https://github.com/php/php-src/security/advisories/GHSA-6wmf-4rv5-p3rp)):
+  estado obsoleto tras un error fatal que permite un use-after-free en
+  una petición posterior del mismo worker.
+
+Fuentes oficiales:
+
+- [Anuncio en php.net](https://www.php.net/archive/2026.php#2026-10-21-5)
+- [Post de The PHP Foundation](https://thephp.foundation/blog/2026/10/21/todays-php-security-release-and-how-were-strengthening-php-security/)
 
 ## Ejemplo real
 
@@ -27,16 +38,21 @@ el script (PHP 8.4.24 → 8.4.27, CLI y FPM):
 
 ## Qué hace
 
-1. Detecta automáticamente la versión de PHP instalada (`php -v`).
-2. Detecta si usás PHP-FPM, y si tu servidor web es Apache o Nginx.
-3. Registra un snapshot "ANTES" (versión de PHP, PHP-FPM y paquetes dpkg)
+1. Verifica que se ejecute como `root` y aborta si no.
+2. Detecta automáticamente la versión de PHP instalada (`php -r`).
+3. Detecta si usás PHP-FPM, y si tu servidor web es Apache o Nginx.
+4. Registra un snapshot "ANTES" (versión de PHP, PHP-FPM y paquetes dpkg)
    en un log con timestamp UTC.
-4. Ejecuta `apt install --only-upgrade` solo sobre los paquetes de PHP.
-5. Reinicia PHP-FPM y el servidor web detectado (esto es crítico: sin
+5. Ejecuta `apt update` y `apt install --only-upgrade` solo sobre los
+   paquetes `phpX.Y*` y `libapache2-mod-phpX.Y` (si usás mod_php), en
+   modo no interactivo y conservando tus archivos de configuración
+   (`--force-confold`).
+6. Reinicia PHP-FPM y el servidor web detectado (esto es crítico: sin
    reiniciar, el binario viejo puede seguir corriendo en memoria aunque
    el paquete ya esté actualizado).
-6. Registra un snapshot "DESPUÉS" para confirmar que el cambio aplicó
-   de verdad.
+7. Registra un snapshot "DESPUÉS" y verifica con `/proc/<PID>/exe` que el
+   proceso FPM en ejecución use el binario nuevo (si aparece `(deleted)`,
+   sigue corriendo el viejo).
 
 ## Uso
 
@@ -61,6 +77,10 @@ Al terminar, compará la versión del snapshot "ANTES" con la del
 - Que tu repositorio ya haya publicado el paquete corregido. Si todavía
   no lo hizo, `apt` no va a encontrar nada nuevo y la versión no
   cambia: por eso el log "DESPUÉS" es importante.
+- Si un paquete trae cambios en un archivo de configuración, el script
+  conserva tu versión actual (`--force-confold`). Revisá después si el
+  paquete nuevo trae opciones que te interesen.
+- El log se va acumulando (append): cada corrida agrega bloques ANTES/DESPUÉS.
 
 ## Qué NO hace
 
