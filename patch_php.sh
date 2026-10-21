@@ -1,74 +1,75 @@
 #!/usr/bin/env bash
 #
 # patch_php.sh
-# Actualiza PHP (cualquier versión instalada vía apt) y registra un log
-# con versión "antes" y "después" de la instalación, incluyendo
-# verificación real del binario cargado en memoria tras el reinicio.
+# Updates PHP (any version installed via apt) and writes a log with the
+# "before" and "after" versions of the installation, including a real
+# check of the binary loaded in memory after the restart.
 #
-# Soporta: Debian/Ubuntu con PHP instalado vía apt (paquete oficial o
-# repositorio Sury/Ondrej). Detecta automáticamente la versión de PHP
-# instalada y el servidor web en uso (Apache o Nginx).
+# Supports: Debian/Ubuntu with PHP installed via apt (official package or
+# the Sury/Ondrej repository). Automatically detects the installed PHP
+# version and the web server in use (Apache or Nginx).
 #
-# Uso:
+# Usage:
 #   sudo ./patch_php.sh
 #
-# Log de salida: /var/log/php_patch_log.txt (configurable abajo)
+# Output log: /var/log/php_patch_log.txt (configurable below)
 
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Ejecuta este script como root (sudo)." >&2
+  echo "Run this script as root (sudo)." >&2
   exit 1
 fi
 
 LOG_FILE="/var/log/php_patch_log.txt"
 
-# --- Detectar versión de PHP instalada ---------------------------------
+# --- Detect installed PHP version ---------------------------------------
 PHP_BIN=$(command -v php || true)
 if [[ -z "$PHP_BIN" ]]; then
-  echo "No se encontró el binario 'php' en el PATH. Abortando." >&2
+  echo "The 'php' binary was not found in PATH. Aborting." >&2
   exit 1
 fi
 
 PHP_VERSION=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
 PHP_PKG="php${PHP_VERSION}"
 
-echo "Detectado PHP ${PHP_VERSION}"
+echo "Detected PHP ${PHP_VERSION}"
 
-# --- Chequeo de EOL: 8.1 y versiones anteriores no reciben paquete nuevo --
-# A partir de PHP 8.2 las ramas tienen soporte activo y los parches de
-# seguridad salen como paquete nuevo (lo que este script actualiza).
-# PHP 8.1, 8.0 y 7.4 ya están EOL: el equipo de PHP solo libera backports
-# de código fuente para esas ramas, no un paquete que "apt upgrade" pueda
-# instalar. Si ese es tu caso, este script no te sirve: hay que aplicar
-# el backport manualmente o migrar a una rama soportada (8.2+).
+# --- EOL check: 8.1 and earlier get no fixed package ----------------------
+# From PHP 8.2 onward, the branches still receive security fixes and those
+# fixes ship as a new package (which is what this script upgrades).
+# PHP 8.1, 8.0 and 7.4 are EOL: the PHP project does not publish fixes for
+# these branches, so there is no new package for "apt upgrade" to install.
+# If that is your case, this script won't help: your options are to
+# migrate to a supported branch (8.2+) or to check whether your
+# distribution's maintainer offers a package with the fix backported.
 PHP_MAJOR="${PHP_VERSION%%.*}"
 PHP_MINOR="${PHP_VERSION##*.}"
 if (( PHP_MAJOR < 8 || (PHP_MAJOR == 8 && PHP_MINOR < 2) )); then
   cat >&2 <<EOF
 
-[ADVERTENCIA] PHP ${PHP_VERSION} está fuera de soporte oficial (EOL).
-No existe paquete nuevo para esta rama, así que 'apt install --only-upgrade'
-no va a traer el parche de seguridad.
+[WARNING] PHP ${PHP_VERSION} is out of official support (EOL).
+The PHP project publishes no fixes for this branch, so
+'apt install --only-upgrade' will not bring in the security patch.
 
-Opciones:
-  1) Aplicar manualmente el backport de código fuente que publique el
-     equipo de seguridad de PHP para esta vulnerabilidad específica.
-  2) Migrar a una rama con soporte activo (PHP 8.2 o superior).
+Options:
+  1) Migrate to a supported branch (PHP 8.2 or higher).
+  2) Check whether your distribution's maintainer offers a package
+     with the fix backported.
 
-Este script no continúa para evitar dar una falsa sensación de que
-quedaste parcheado. Abortando.
+This script will not continue, to avoid giving you a false sense of
+being patched. Aborting.
 EOF
   exit 1
 fi
 
-# --- Detectar si existe el servicio FPM correspondiente -----------------
+# --- Detect whether the matching FPM service exists -----------------------
 FPM_SERVICE=""
 if systemctl cat "php${PHP_VERSION}-fpm.service" &>/dev/null; then
   FPM_SERVICE="php${PHP_VERSION}-fpm"
 fi
 
-# --- Detectar servidor web activo ---------------------------------------
+# --- Detect the active web server -----------------------------------------
 WEB_SERVICE=""
 if systemctl is-active --quiet apache2 2>/dev/null; then
   WEB_SERVICE="apache2"
@@ -76,7 +77,7 @@ elif systemctl is-active --quiet nginx 2>/dev/null; then
   WEB_SERVICE="nginx"
 fi
 
-# --- Función auxiliar: snapshot de versiones -----------------------------
+# --- Helper function: version snapshot --------------------------------------
 snapshot() {
   local label="$1"
   {
@@ -90,39 +91,39 @@ snapshot() {
   } >> "$LOG_FILE" 2>&1
 }
 
-# --- Antes ----------------------------------------------------------------
-snapshot "ANTES"
+# --- Before -----------------------------------------------------------------
+snapshot "BEFORE"
 
-# --- Actualizar -------------------------------------------------------------
+# --- Upgrade ----------------------------------------------------------------
 export DEBIAN_FRONTEND=noninteractive
 apt update
 apt install --only-upgrade "${PHP_PKG}*" "libapache2-mod-${PHP_PKG}" -y \
   -o Dpkg::Options::="--force-confold"
 
-# --- Reiniciar servicios ----------------------------------------------------
+# --- Restart services ---------------------------------------------------------
 if [[ -n "$FPM_SERVICE" ]]; then
   systemctl restart "$FPM_SERVICE"
-  echo "Reiniciado: $FPM_SERVICE"
+  echo "Restarted: $FPM_SERVICE"
 fi
 
 if [[ -n "$WEB_SERVICE" ]]; then
   systemctl restart "$WEB_SERVICE"
-  echo "Reiniciado: $WEB_SERVICE"
+  echo "Restarted: $WEB_SERVICE"
 fi
 
 if [[ -z "$FPM_SERVICE" && -z "$WEB_SERVICE" ]]; then
-  echo "AVISO: no se detectó php-fpm ni apache2/nginx activos. Reinicia manualmente el servicio que sirve PHP." >&2
+  echo "WARNING: no active php-fpm or apache2/nginx detected. Restart the service that serves PHP manually." >&2
 fi
 
-# --- Después ------------------------------------------------------------
-snapshot "DESPUES"
+# --- After --------------------------------------------------------------------
+snapshot "AFTER"
 
 echo ""
-echo "Log completo en: $LOG_FILE"
+echo "Full log at: $LOG_FILE"
 echo "---"
 tail -n 40 "$LOG_FILE"
 
 if [[ -n "$FPM_SERVICE" ]]; then
   PID=$(systemctl show "$FPM_SERVICE" -p MainPID --value)
-  echo "Binario en ejecución: $(readlink /proc/$PID/exe)" | tee -a "$LOG_FILE"
+  echo "Running binary: $(readlink /proc/$PID/exe)" | tee -a "$LOG_FILE"
 fi
